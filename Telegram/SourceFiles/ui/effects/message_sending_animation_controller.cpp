@@ -441,12 +441,8 @@ void MessageSendingAnimationController::subscribeToDestructions() {
 
 void MessageSendingAnimationController::appendSending(
 		MessageSendingAnimationFrom from) {
-	if (anim::Disabled()) {
-		return;
-	}
-	if (from.localId) {
-		_itemSendPending[*from.localId] = std::move(from);
-	}
+	// AyuGram+: message sending animations are disabled for faster sending.
+	(void)from;
 }
 
 void MessageSendingAnimationController::startAnimation(SendingInfoTo &&to) {

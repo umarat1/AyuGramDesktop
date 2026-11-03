@@ -567,7 +567,8 @@ void Application::startSettingsAndBackground() {
 }
 
 void Application::checkSystemDarkMode() {
-	const auto maybeDarkMode = settings().systemDarkMode();
+	// AyuGram+: always prefer the bundled Win11 Red night theme.
+	const auto maybeDarkMode = std::optional<bool>(true);
 	const auto darkModeEnabled = settings().systemDarkModeEnabled();
 	const auto needToSwitch = darkModeEnabled
 		&& maybeDarkMode

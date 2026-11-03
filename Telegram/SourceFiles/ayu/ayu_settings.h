@@ -163,7 +163,7 @@ private:
 	rpl::variable<bool> _sendReadMessages = true;
 	rpl::variable<bool> _sendReadStories = true;
 	rpl::variable<bool> _sendOnlinePackets = true;
-	rpl::variable<bool> _sendUploadProgress = true;
+	rpl::variable<bool> _sendUploadProgress = false; // AyuGram+: no typing/upload status by default
 	rpl::variable<bool> _sendOfflinePacketAfterOnline = false;
 	rpl::variable<bool> _markReadAfterAction = true;
 	rpl::variable<bool> _useScheduledMessages = false;

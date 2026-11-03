@@ -18,6 +18,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_peer_values.h" // Data::AmPremiumValue.
 #include "data/data_premium_limits.h"
 #include "data/data_session.h"
+#include "data/data_stories.h"
 #include "data/data_unread_value.h"
 #include "data/data_user.h"
 #include "lang/lang_keys.h"
@@ -45,9 +46,78 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 // AyuGram includes
 #include "ayu/ayu_settings.h"
 
+// AyuGram+ includes
+#include "info/downloads/info_downloads_widget.h"
+#include "info/global_media/info_global_media_widget.h"
+#include "info/info_memento.h"
+#include "info/stories/info_stories_widget.h"
+#include "storage/storage_shared_media.h"
+
 
 namespace Ui {
 namespace {
+
+// AyuGram+: extra tabs after the folders in the main chats list.
+constexpr auto kAyuPlusExtraTabsCount = 5;
+
+[[nodiscard]] QString AyuPlusInboxTitle() {
+	return QString::fromUtf8("\xD0\x92\xD1\x85\xD0\xBE\xD0\xB4\xD1\x8F\xD1\x89\xD0\xB8\xD0\xB5"); // Inbox
+}
+
+[[nodiscard]] QString AyuPlusExtraTabTitle(int index) {
+	switch (index) {
+	case 0: return QString::fromUtf8("\xD0\x97\xD0\xB0\xD0\xB3\xD1\x80\xD1\x83\xD0\xB7\xD0\xBA\xD0\xB8"); // Downloads
+	case 1: return QString::fromUtf8("\xD0\x9C\xD1\x83\xD0\xB7\xD1\x8B\xD0\xBA\xD0\xB0"); // Music
+	case 2: return QString::fromUtf8("\xD0\x92\xD0\xB8\xD0\xB4\xD0\xB5\xD0\xBE"); // Videos
+	case 3: return QString::fromUtf8("\xD0\xA4\xD0\xBE\xD1\x82\xD0\xBE"); // Photos
+	case 4: return QString::fromUtf8("\xD0\xA1\xD1\x82\xD0\xBE\xD1\x80\xD0\xB8\xD1\x81"); // Stories
+	}
+	return QString();
+}
+
+[[nodiscard]] const style::internal::Icon *AyuPlusExtraTabIcon(int index) {
+	switch (index) {
+	case 0: return LookupFilterIcon(FilterIcon::Book).tabs.get();
+	case 1: return LookupFilterIcon(FilterIcon::Note).tabs.get();
+	case 2: return LookupFilterIcon(FilterIcon::Game).tabs.get();
+	case 3: return LookupFilterIcon(FilterIcon::Palette).tabs.get();
+	case 4: return LookupFilterIcon(FilterIcon::Party).tabs.get();
+	}
+	return LookupFilterIcon(FilterIcon::Custom).tabs.get();
+}
+
+void AyuPlusOpenExtraTab(
+		not_null<Window::SessionController*> controller,
+		int index) {
+	using Type = Storage::SharedMediaType;
+	const auto self = controller->session().user();
+	switch (index) {
+	case 0:
+		controller->showSection(Info::Downloads::Make(self));
+		break;
+	case 1:
+		controller->showSection(
+			Info::GlobalMedia::Make(self, Type::MusicFile));
+		break;
+	case 2:
+		controller->showSection(Info::GlobalMedia::Make(self, Type::Video));
+		break;
+	case 3:
+		controller->showSection(Info::GlobalMedia::Make(self, Type::Photo));
+		break;
+	case 4: {
+		const auto &sources = controller->session().data().stories().sources(
+			Data::StorySourcesList::NotHidden);
+		if (!sources.empty()) {
+			controller->openPeerStories(
+				sources.front().id,
+				Data::StorySourcesList::NotHidden);
+		} else {
+			controller->showSection(Info::Stories::Make(self));
+		}
+	} break;
+	}
+}
 
 struct State final {
 	Ui::Animations::Simple animation;
@@ -151,7 +221,8 @@ void ShowFiltersListMenu(
 
 	const auto reorderAll = session->user()->isPremium();
 	const auto maxLimit = (reorderAll ? 1 : 0)
-		+ Data::PremiumLimits(session).dialogFiltersCurrent();
+		+ Data::PremiumLimits(session).dialogFiltersCurrent()
+		+ Data::kAyuPlusLocalFiltersCount;
 	const auto premiumFrom = (reorderAll ? 0 : 1) + maxLimit;
 
 	for (auto i = 0; i < list.size(); ++i) {
@@ -232,6 +303,9 @@ not_null<Ui::RpWidget*> AddChatFiltersTabsStrip(
 				? st::dialogsSearchTabs
 				: st::chatsFiltersTabs));
 	const auto state = wrap->lifetime().make_state<State>();
+	const auto ayuExtraTabs = trackActiveFilterAndUnreadAndReorder
+		? kAyuPlusExtraTabsCount
+		: 0;
 	const auto reassignUnreadValue = [=] {
 		state->reorderLifetime.destroy();
 		const auto &list = session->data().chatsFilters().list();
@@ -279,8 +353,12 @@ not_null<Ui::RpWidget*> AddChatFiltersTabsStrip(
 					filters->moveAllToFront();
 				}
 			}
-			Assert(oldPosition >= 0 && oldPosition < list.size());
-			Assert(newPosition >= 0 && newPosition < list.size());
+			if (oldPosition < 0
+				|| oldPosition >= list.size()
+				|| newPosition < 0
+				|| newPosition >= list.size()) {
+				return; // AyuGram+: extra tabs can't be reordered.
+			}
 
 			auto order = ranges::views::all(
 				list
@@ -396,24 +474,32 @@ not_null<Ui::RpWidget*> AddChatFiltersTabsStrip(
 			return On(PowerSaving::kEmojiChat)
 				|| controller->isGifPausedAtLeastFor(pauseLevel);
 		};
-		const auto sectionsChanged = slider->setSectionsAndCheckChanged(
-			ranges::views::all(
-				list
-			) | ranges::views::transform([](const Data::ChatFilter &filter) {
-				auto title = filter.title();
-				return title.text.empty()
-					? TextWithEntities{ tr::lng_filters_all_short(tr::now) }
-					: title.isStatic
-					? Data::ForceCustomEmojiStatic(title.text)
-					: title.text;
-			}) | ranges::to_vector, context, paused);
-		slider->setSectionIcons(ranges::views::all(
+		auto titles = ranges::views::all(
+			list
+		) | ranges::views::transform([](const Data::ChatFilter &filter) {
+			auto title = filter.title();
+			return title.text.empty()
+				? TextWithEntities{ AyuPlusInboxTitle() }
+				: title.isStatic
+				? Data::ForceCustomEmojiStatic(title.text)
+				: title.text;
+		}) | ranges::to_vector;
+		auto icons = ranges::views::all(
 			list
 		) | ranges::views::transform([](const Data::ChatFilter &filter) {
 			return LookupFilterIcon(filter.id()
 				? ComputeFilterIcon(filter)
 				: FilterIcon::All).tabs.get();
-		}) | ranges::to_vector);
+		}) | ranges::to_vector;
+		for (auto i = 0; i != ayuExtraTabs; ++i) {
+			titles.push_back(TextWithEntities{ AyuPlusExtraTabTitle(i) });
+			icons.push_back(AyuPlusExtraTabIcon(i));
+		}
+		const auto sectionsChanged = slider->setSectionsAndCheckChanged(
+			std::move(titles),
+			context,
+			paused);
+		slider->setSectionIcons(std::move(icons));
 		if (!sectionsChanged) {
 			return;
 		}
@@ -422,7 +508,8 @@ not_null<Ui::RpWidget*> AddChatFiltersTabsStrip(
 		{
 			const auto reorderAll = session->user()->isPremium();
 			const auto maxLimit = (reorderAll ? 1 : 0)
-				+ Data::PremiumLimits(session).dialogFiltersCurrent();
+				+ Data::PremiumLimits(session).dialogFiltersCurrent()
+				+ Data::kAyuPlusLocalFiltersCount;
 			const auto premiumFrom = (reorderAll ? 0 : 1) + maxLimit;
 			slider->setLockedFrom((premiumFrom >= list.size())
 				? 0
@@ -439,6 +526,11 @@ not_null<Ui::RpWidget*> AddChatFiltersTabsStrip(
 				state->reorder->addPinnedInterval(
 					premiumFrom,
 					std::max(1, int(list.size()) - maxLimit));
+				if (ayuExtraTabs > 0) {
+					state->reorder->addPinnedInterval(
+						int(list.size()),
+						ayuExtraTabs);
+				}
 			}
 		}
 		if (trackActiveFilterAndUnreadAndReorder) {
@@ -494,6 +586,17 @@ not_null<Ui::RpWidget*> AddChatFiltersTabsStrip(
 			if (slider->reordering()) {
 				return;
 			}
+			const auto listSize = int(
+				session->data().chatsFilters().list().size());
+			if (index >= listSize) {
+				// AyuGram+: extra tab, open the existing view.
+				if (index < listSize + ayuExtraTabs) {
+					AyuPlusOpenExtraTab(controller, index - listSize);
+				}
+				return;
+			} else if (index < 0) {
+				return;
+			}
 			const auto &filter = filterByIndex(index);
 			if (was != index) {
 				state->lastFilterId = filter.id();
@@ -513,7 +616,9 @@ not_null<Ui::RpWidget*> AddChatFiltersTabsStrip(
 					[=](int i) { slider->setActiveSection(i); });
 			}
 		}, state->rebuildLifetime);
-		wrap->toggle((list.size() > 1), anim::type::instant);
+		wrap->toggle(
+			(list.size() > 1) || (ayuExtraTabs > 0),
+			anim::type::instant);
 
 		if (state->reorder) {
 			state->reorder->start();

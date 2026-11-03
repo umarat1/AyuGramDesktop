@@ -1209,7 +1209,7 @@ private:
 	QByteArray _tonsiteStorageToken;
 	rpl::variable<int> _ivZoom = 0;
 	Media::VideoQuality _videoQuality;
-	rpl::variable<bool> _chatFiltersHorizontal = false;
+	rpl::variable<bool> _chatFiltersHorizontal = true; // AyuGram+
 	rpl::variable<Ui::ChatsFiltersTabsMode> _chatFiltersTabsMode
 		= Ui::ChatsFiltersTabsMode::Default;
 	base::flat_map<QByteArray, QByteArray> _prefs;

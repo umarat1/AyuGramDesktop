@@ -38,7 +38,7 @@ namespace Storage {
 namespace {
 
 // max 1mb uploaded at the same time in each session
-constexpr auto kMaxUploadPerSession = 1024 * 1024;
+constexpr auto kMaxUploadPerSession = 2 * 1024 * 1024; // AyuGram+: was 1mb
 
 constexpr auto kDocumentMaxPartsCountDefault = 4000;
 
@@ -46,10 +46,10 @@ constexpr auto kDocumentMaxPartsCountDefault = 4000;
 constexpr auto kDocumentUploadPartSize0 = 32 * 1024;
 
 // 64kb for little document ( <= 32mb )
-constexpr auto kDocumentUploadPartSize1 = 64 * 1024;
+constexpr auto kDocumentUploadPartSize1 = 128 * 1024; // AyuGram+: was 64kb
 
 // 128kb for small document ( <= 375mb )
-constexpr auto kDocumentUploadPartSize2 = 128 * 1024;
+constexpr auto kDocumentUploadPartSize2 = 256 * 1024; // AyuGram+: was 128kb
 
 // 256kb for medium document ( <= 750mb )
 constexpr auto kDocumentUploadPartSize3 = 256 * 1024;
@@ -58,7 +58,7 @@ constexpr auto kDocumentUploadPartSize3 = 256 * 1024;
 constexpr auto kDocumentUploadPartSize4 = 512 * 1024;
 
 // One part each 200ms, if not uploaded faster.
-constexpr auto kUploadRequestInterval = crl::time(200);
+constexpr auto kUploadRequestInterval = crl::time(100); // AyuGram+: was 200ms
 
 // How much time without upload causes additional session kill.
 constexpr auto kKillSessionTimeout = 15 * crl::time(1000);

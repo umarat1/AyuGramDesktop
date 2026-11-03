@@ -1,0 +1,322 @@
+name: AyuGram+ Windows x64
+
+# AyuGram+ custom build: Win11 Red theme by default, unified tabs bar,
+# no send animations / typing status by default, faster uploads.
+#
+# The first (uncached) run builds all third-party libraries, which can take
+# longer than one GitHub job allows. The "libs" job therefore always saves
+# its progress to the Actions cache (even on failure / timeout), so simply
+# re-running the workflow continues from the last finished library stage.
+
+on:
+  workflow_dispatch:
+    inputs:
+      make_release:
+        description: 'Create a GitHub Release with the zip'
+        type: boolean
+        default: true
+  push:
+    branches:
+      - dev
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - 'changelog.txt'
+      - 'LEGAL'
+      - 'LICENSE'
+      - 'snap/**'
+      - 'Telegram/build/docker/**'
+      - 'Telegram/SourceFiles/platform/linux/**'
+      - 'Telegram/SourceFiles/platform/mac/**'
+
+concurrency:
+  group: ayuplus-win-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  PREPARE_PATH: "Telegram/build/prepare/prepare.py"
+  # AyuGram's documented public API credentials (docs/building-win.md).
+  AYU_API_ID: "2040"
+  AYU_API_HASH: "b18441a1ff607e10a989891a5462e627"
+
+jobs:
+
+  libs:
+    name: Libraries (x64)
+    runs-on: windows-latest
+    timeout-minutes: 355
+
+    defaults:
+      run:
+        shell: cmd
+
+    steps:
+      - name: Prepare directories.
+        run: |
+          mkdir %userprofile%\TBuild\Libraries
+          mklink /d %GITHUB_WORKSPACE%\TBuild %userprofile%\TBuild
+          echo TBUILD=%GITHUB_WORKSPACE%\TBuild>>%GITHUB_ENV%
+          echo LibrariesPath=%GITHUB_WORKSPACE%\TBuild\Libraries\win64>>%GITHUB_ENV%
+
+      - name: Get repository name.
+        shell: bash
+        run: echo "REPO_NAME=${GITHUB_REPOSITORY##*/}" >> $GITHUB_ENV
+
+      - name: Clone.
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          path: ${{ env.TBUILD }}\${{ env.REPO_NAME }}
+
+      - name: First set up.
+        shell: bash
+        run: |
+          DOCPATH=$TBUILD/$REPO_NAME/docs/building-win.md
+          SDK="$(grep "SDK version" $DOCPATH | sed -r 's/.*\*\*(.*)\*\* SDK version.*/\1/')"
+          echo "SDK=$SDK" >> $GITHUB_ENV
+
+          sed -i '/CMAKE_${lang}_FLAGS_DEBUG_INIT/s/${_Zi}//' "$PROGRAMFILES"/CMake/share/cmake*/Modules/Platform/Windows-MSVC.cmake
+
+          echo "$(sha256sum $TBUILD/$REPO_NAME/$PREPARE_PATH | awk '{ print $1 }')" >> CACHE_KEY.txt
+          echo "$SDK" >> CACHE_KEY.txt
+          echo "CACHE_KEY=$(sha256sum CACHE_KEY.txt | awk '{ print $1 }')" >> $GITHUB_ENV
+
+          git config --global user.email "ci@example.com"
+          git config --global user.name "CI"
+
+      - uses: Eden-CI/msvc-dev-cmd@master
+        name: Native Tools Command Prompt.
+        with:
+          arch: x64
+          sdk: ${{ env.SDK }}
+          toolset: '14.44'
+
+      - name: NuGet sources.
+        run: |
+          nuget sources Disable -Name "Microsoft Visual Studio Offline Packages"
+          nuget sources Add -Source https://api.nuget.org/v3/index.json & exit 0
+
+      - name: Restore ThirdParty cache.
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.TBUILD }}\ThirdParty
+          key: ayuplus-third-party-${{ env.CACHE_KEY }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ayuplus-third-party-${{ env.CACHE_KEY }}-
+            ayuplus-third-party-
+
+      - name: Restore Libraries cache.
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\*
+            !${{ env.LibrariesPath }}\cache_keys
+            !${{ env.LibrariesPath }}\[qQ]t[_-]*
+            ${{ env.LibrariesPath }}\cache_keys\*
+            !${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
+          key: ayuplus-libs-${{ env.CACHE_KEY }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ayuplus-libs-${{ env.CACHE_KEY }}-
+            ayuplus-libs-
+
+      - name: Restore Qt cache.
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\[qQ]t[_-]*
+            ${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
+          key: ayuplus-qt-${{ env.CACHE_KEY }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ayuplus-qt-${{ env.CACHE_KEY }}-
+            ayuplus-qt-
+
+      - name: Libraries.
+        id: libraries
+        timeout-minutes: 290
+        run: |
+          %TBUILD%\%REPO_NAME%\Telegram\build\prepare\win.bat silent
+
+      - name: Free up some disk space.
+        if: always()
+        shell: bash
+        run: find $LibrariesPath '(' '(' ! '(' -name '*.lib' -o -name '*.a' -o -name '*.exe' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -path '*/nv-codec-headers/*' ')' -type f ')' -o -empty ')' -delete || true
+
+      - name: Save ThirdParty cache.
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.TBUILD }}\ThirdParty
+          key: ayuplus-third-party-${{ env.CACHE_KEY }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Save Libraries cache.
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\*
+            !${{ env.LibrariesPath }}\cache_keys
+            !${{ env.LibrariesPath }}\[qQ]t[_-]*
+            ${{ env.LibrariesPath }}\cache_keys\*
+            !${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
+          key: ayuplus-libs-${{ env.CACHE_KEY }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Save Qt cache.
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\[qQ]t[_-]*
+            ${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
+          key: ayuplus-qt-${{ env.CACHE_KEY }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+  build:
+    name: AyuGram+ build (x64 Release)
+    needs: libs
+    runs-on: windows-latest
+    timeout-minutes: 355
+
+    defaults:
+      run:
+        shell: cmd
+
+    steps:
+      - name: Prepare directories.
+        run: |
+          mkdir %userprofile%\TBuild\Libraries
+          mklink /d %GITHUB_WORKSPACE%\TBuild %userprofile%\TBuild
+          echo TBUILD=%GITHUB_WORKSPACE%\TBuild>>%GITHUB_ENV%
+          echo LibrariesPath=%GITHUB_WORKSPACE%\TBuild\Libraries\win64>>%GITHUB_ENV%
+
+      - name: Get repository name.
+        shell: bash
+        run: echo "REPO_NAME=${GITHUB_REPOSITORY##*/}" >> $GITHUB_ENV
+
+      - name: Clone.
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          path: ${{ env.TBUILD }}\${{ env.REPO_NAME }}
+
+      - name: First set up.
+        shell: bash
+        run: |
+          DOCPATH=$TBUILD/$REPO_NAME/docs/building-win.md
+          SDK="$(grep "SDK version" $DOCPATH | sed -r 's/.*\*\*(.*)\*\* SDK version.*/\1/')"
+          echo "SDK=$SDK" >> $GITHUB_ENV
+
+          sed -i '/CMAKE_${lang}_FLAGS_DEBUG_INIT/s/${_Zi}//' "$PROGRAMFILES"/CMake/share/cmake*/Modules/Platform/Windows-MSVC.cmake
+
+          echo "$(sha256sum $TBUILD/$REPO_NAME/$PREPARE_PATH | awk '{ print $1 }')" >> CACHE_KEY.txt
+          echo "$SDK" >> CACHE_KEY.txt
+          echo "CACHE_KEY=$(sha256sum CACHE_KEY.txt | awk '{ print $1 }')" >> $GITHUB_ENV
+
+          git config --global user.email "ci@example.com"
+          git config --global user.name "CI"
+
+      - uses: Eden-CI/msvc-dev-cmd@master
+        name: Native Tools Command Prompt.
+        with:
+          arch: x64
+          sdk: ${{ env.SDK }}
+          toolset: '14.44'
+
+      - name: NuGet sources.
+        run: |
+          nuget sources Disable -Name "Microsoft Visual Studio Offline Packages"
+          nuget sources Add -Source https://api.nuget.org/v3/index.json & exit 0
+
+      - name: Restore ThirdParty cache.
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.TBUILD }}\ThirdParty
+          key: ayuplus-third-party-${{ env.CACHE_KEY }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ayuplus-third-party-${{ env.CACHE_KEY }}-
+
+      - name: Restore Libraries cache.
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\*
+            !${{ env.LibrariesPath }}\cache_keys
+            !${{ env.LibrariesPath }}\[qQ]t[_-]*
+            ${{ env.LibrariesPath }}\cache_keys\*
+            !${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
+          key: ayuplus-libs-${{ env.CACHE_KEY }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ayuplus-libs-${{ env.CACHE_KEY }}-
+
+      - name: Restore Qt cache.
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\[qQ]t[_-]*
+            ${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
+          key: ayuplus-qt-${{ env.CACHE_KEY }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ayuplus-qt-${{ env.CACHE_KEY }}-
+
+      - name: Libraries (verify cache, should be quick).
+        timeout-minutes: 120
+        run: |
+          %TBUILD%\%REPO_NAME%\Telegram\build\prepare\win.bat silent
+
+      - name: AyuGram+ build.
+        run: |
+          cd %TBUILD%\%REPO_NAME%\Telegram
+
+          call configure.bat ^
+          x64 ^
+          -D TDESKTOP_API_ID=%AYU_API_ID% ^
+          -D TDESKTOP_API_HASH=%AYU_API_HASH% ^
+          -D CMAKE_CONFIGURATION_TYPES=Release ^
+          -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON ^
+          -D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON
+
+          cmake --build ..\out --config Release --parallel
+
+      - name: Package.
+        shell: bash
+        run: |
+          set -e
+          OUT="$TBUILD/$REPO_NAME/out/Release"
+          ls -la "$OUT" || true
+          PKG="$GITHUB_WORKSPACE/AyuGramPlus"
+          mkdir -p "$PKG/themes"
+          EXE=""
+          for name in AyuGram.exe Telegram.exe; do
+            if [ -f "$OUT/$name" ]; then EXE="$name"; break; fi
+          done
+          if [ -z "$EXE" ]; then echo "No exe found"; exit 1; fi
+          cp "$OUT/$EXE" "$PKG/"
+          [ -f "$OUT/Updater.exe" ] && cp "$OUT/Updater.exe" "$PKG/" || true
+          [ -d "$OUT/modules" ] && cp -r "$OUT/modules" "$PKG/" || true
+          cp "$TBUILD/$REPO_NAME"/ayuplus/themes/*.tdesktop-theme "$PKG/themes/" || true
+          cp "$TBUILD/$REPO_NAME"/ayuplus/README-AyuGramPlus.txt "$PKG/" || true
+          cd "$GITHUB_WORKSPACE"
+          7z a -tzip AyuGramPlus-win64.zip AyuGramPlus
+          ls -la AyuGramPlus-win64.zip
+          echo "PKG_EXE=$EXE" >> $GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        name: Upload artifact.
+        with:
+          name: AyuGramPlus-win64
+          path: AyuGramPlus-win64.zip
+          retention-days: 30
+
+      - name: GitHub Release.
+        if: github.event_name == 'push' || inputs.make_release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="ayuplus-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          gh release create "$TAG" AyuGramPlus-win64.zip \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "AyuGram+ Windows x64 (build ${GITHUB_RUN_NUMBER})" \
+            --notes "Portable AyuGram+ build: unzip and run ${PKG_EXE}. Win11 Red theme by default (extra theme variants in themes/). Built from ${GITHUB_SHA}."

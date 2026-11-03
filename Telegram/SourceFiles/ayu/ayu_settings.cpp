@@ -205,7 +205,7 @@ void from_json(const nlohmann::json &j, GhostModeAccountSettings &s) {
 	s._sendReadMessages = j.value("sendReadMessages", true);
 	s._sendReadStories = j.value("sendReadStories", true);
 	s._sendOnlinePackets = j.value("sendOnlinePackets", true);
-	s._sendUploadProgress = j.value("sendUploadProgress", true);
+	s._sendUploadProgress = j.value("sendUploadProgress", false);
 	s._sendOfflinePacketAfterOnline = j.value("sendOfflinePacketAfterOnline", false);
 	s._markReadAfterAction = j.value("markReadAfterAction", true);
 	s._useScheduledMessages = j.value("useScheduledMessages", false);
@@ -383,7 +383,7 @@ void AyuSettings::load() {
 					{"sendReadMessages", p.value("sendReadMessages", true)},
 					{"sendReadStories", p.value("sendReadStories", true)},
 					{"sendOnlinePackets", p.value("sendOnlinePackets", true)},
-					{"sendUploadProgress", p.value("sendUploadProgress", true)},
+					{"sendUploadProgress", p.value("sendUploadProgress", false)},
 					{"sendOfflinePacketAfterOnline", p.value("sendOfflinePacketAfterOnline", false)},
 					{"markReadAfterAction", p.value("markReadAfterAction", true)},
 					{"useScheduledMessages", p.value("useScheduledMessages", false)},

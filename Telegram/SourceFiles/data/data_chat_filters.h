@@ -146,6 +146,14 @@ struct TagColorChanged final {
 	bool colorExistenceChanged = false;
 };
 
+// AyuGram+: local-only folders by chat type (not synced to the server).
+inline constexpr auto kAyuPlusLocalFilterFirst = FilterId(0x7FFF0001);
+inline constexpr auto kAyuPlusLocalFiltersCount = 3;
+[[nodiscard]] inline bool IsAyuPlusLocalFilter(FilterId id) {
+	return (id >= kAyuPlusLocalFilterFirst)
+		&& (id < kAyuPlusLocalFilterFirst + kAyuPlusLocalFiltersCount);
+}
+
 class ChatFilters final {
 public:
 	explicit ChatFilters(not_null<Session*> owner);
@@ -229,6 +237,7 @@ private:
 	bool applyOrder(const QVector<MTPint> &order);
 	bool applyChange(ChatFilter &filter, ChatFilter &&updated);
 	void applyInsert(ChatFilter filter, int position);
+	bool ensureAyuPlusLocalFilters();
 	void applyRemove(int position);
 
 	void checkLoadMoreChatsLists();

@@ -543,11 +543,18 @@ void ChatFilters::received(const QVector<MTPDialogFilter> &list) {
 		++position;
 	}
 	while (position < _list.size()) {
+		if (IsAyuPlusLocalFilter(_list[position].id())) {
+			++position;
+			continue;
+		}
 		applyRemove(position);
 		changed = true;
 	}
 	if (!settings.hideAllChatsFolder() && !ranges::contains(begin(_list), end(_list), 0, &ChatFilter::id)) {
 		_list.insert(begin(_list), ChatFilter());
+	}
+	if (ensureAyuPlusLocalFilters()) {
+		changed = true;
 	}
 	if (changed || !_loaded || _reloading) {
 		_loaded = true;
@@ -702,6 +709,79 @@ void ChatFilters::set(ChatFilter filter) {
 	} else if (applyChange(*i, std::move(filter))) {
 		_listChanged.fire({});
 	}
+}
+
+bool ChatFilters::ensureAyuPlusLocalFilters() {
+	using Flag = ChatFilter::Flag;
+	struct Local {
+		FilterId id = 0;
+		const char *title = nullptr;
+		ChatFilter::Flags flags;
+	};
+	const Local locals[] = {
+		{
+			kAyuPlusLocalFilterFirst,
+			"\xD0\x9A\xD0\xB0\xD0\xBD\xD0\xB0\xD0\xBB\xD1\x8B", // Channels
+			Flag::Channels | Flag::NoArchived,
+		},
+		{
+			kAyuPlusLocalFilterFirst + 1,
+			"\xD0\x93\xD1\x80\xD1\x83\xD0\xBF\xD0\xBF\xD1\x8B", // Groups
+			Flag::Groups | Flag::NoArchived,
+		},
+		{
+			kAyuPlusLocalFilterFirst + 2,
+			"\xD0\xA7\xD0\xB0\xD1\x82\xD1\x8B", // Private chats
+			Flag::Contacts | Flag::NonContacts | Flag::NoArchived,
+		},
+	};
+	const auto idsBefore = ranges::views::all(
+		_list
+	) | ranges::views::transform(&ChatFilter::id) | ranges::to_vector;
+
+	for (const auto &local : locals) {
+		if (!ranges::contains(_list, local.id, &ChatFilter::id)) {
+			applyInsert(
+				ChatFilter(
+					local.id,
+					ChatFilterTitle{
+						TextWithEntities{ QString::fromUtf8(local.title) },
+						true,
+					},
+					QString(),
+					std::nullopt,
+					local.flags,
+					{},
+					{},
+					{}),
+				int(_list.size()));
+		}
+	}
+
+	// Keep local folders right after "All chats".
+	auto extracted = std::vector<ChatFilter>();
+	extracted.reserve(kAyuPlusLocalFiltersCount);
+	for (auto i = 0; i != kAyuPlusLocalFiltersCount; ++i) {
+		const auto it = ranges::find(
+			_list,
+			kAyuPlusLocalFilterFirst + i,
+			&ChatFilter::id);
+		if (it != end(_list)) {
+			extracted.push_back(std::move(*it));
+			_list.erase(it);
+		}
+	}
+	const auto all = ranges::find(_list, FilterId(0), &ChatFilter::id);
+	const auto at = (all == end(_list)) ? 0 : int(all - begin(_list)) + 1;
+	_list.insert(
+		begin(_list) + at,
+		std::make_move_iterator(begin(extracted)),
+		std::make_move_iterator(end(extracted)));
+
+	const auto idsAfter = ranges::views::all(
+		_list
+	) | ranges::views::transform(&ChatFilter::id) | ranges::to_vector;
+	return (idsBefore != idsAfter);
 }
 
 void ChatFilters::applyInsert(ChatFilter filter, int position) {
@@ -915,15 +995,26 @@ void ChatFilters::saveOrder(
 	api->request(_saveOrderRequestId).cancel();
 
 	auto ids = QVector<MTPint>();
+	auto serverIds = QVector<MTPint>();
 	ids.reserve(order.size());
+	serverIds.reserve(order.size());
 	for (const auto id : order) {
 		ids.push_back(MTP_int(id));
+		if (!IsAyuPlusLocalFilter(id)) {
+			serverIds.push_back(MTP_int(id));
+		}
 	}
-	const auto wrapped = MTP_vector<MTPint>(ids);
 
-	apply(MTP_updateDialogFilterOrder(wrapped));
+	// AyuGram+: apply the full order locally, send only server folders.
+	if (applyOrder(ids)) {
+		if (ensureAyuPlusLocalFilters()) {
+			_listChanged.fire({});
+		}
+	} else {
+		load(true);
+	}
 	_saveOrderRequestId = api->request(MTPmessages_UpdateDialogFiltersOrder(
-		wrapped
+		MTP_vector<MTPint>(serverIds)
 	)).afterRequest(_saveOrderAfterId).send();
 }
 
