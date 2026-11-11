@@ -87,6 +87,31 @@ jobs:
           git config --global user.email "ci@example.com"
           git config --global user.name "CI"
 
+
+      - name: Install ATL and MFC for toolset 14.44.
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $setup = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
+          if (-not (Test-Path $vswhere)) { throw "vswhere.exe not found" }
+          if (-not (Test-Path $setup)) { throw "VS installer setup.exe not found" }
+          $installPath = & $vswhere -latest -products * -property installationPath
+          if (-not $installPath) { throw "Visual Studio installation not found" }
+          Write-Host "VS at $installPath"
+          Get-Process vs_installer,vs_installershell,vs_setup_bootstrapper -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          $p = Start-Process -FilePath $setup -Wait -PassThru -ArgumentList @(
+            'modify',
+            '--installPath', $installPath,
+            '--quiet','--wait','--norestart','--nocache',
+            '--add','Microsoft.VisualStudio.Component.VC.14.44.17.14.ATL',
+            '--add','Microsoft.VisualStudio.Component.VC.14.44.17.14.MFC'
+          )
+          Write-Host "installer exit $($p.ExitCode)"
+          if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010 -and $p.ExitCode -ne 1641) { exit $p.ExitCode }
+          $atl = Get-ChildItem -Path $installPath -Recurse -Filter atlbase.h -ErrorAction SilentlyContinue | Select-Object -First 5 -ExpandProperty FullName
+          if (-not $atl) { throw "atlbase.h still missing after installing ATL/MFC 14.44" }
+          $atl | ForEach-Object { Write-Host "found $_" }
+
       - uses: Eden-CI/msvc-dev-cmd@master
         name: Native Tools Command Prompt.
         with:
@@ -215,6 +240,31 @@ jobs:
 
           git config --global user.email "ci@example.com"
           git config --global user.name "CI"
+
+
+      - name: Install ATL and MFC for toolset 14.44.
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $setup = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
+          if (-not (Test-Path $vswhere)) { throw "vswhere.exe not found" }
+          if (-not (Test-Path $setup)) { throw "VS installer setup.exe not found" }
+          $installPath = & $vswhere -latest -products * -property installationPath
+          if (-not $installPath) { throw "Visual Studio installation not found" }
+          Write-Host "VS at $installPath"
+          Get-Process vs_installer,vs_installershell,vs_setup_bootstrapper -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          $p = Start-Process -FilePath $setup -Wait -PassThru -ArgumentList @(
+            'modify',
+            '--installPath', $installPath,
+            '--quiet','--wait','--norestart','--nocache',
+            '--add','Microsoft.VisualStudio.Component.VC.14.44.17.14.ATL',
+            '--add','Microsoft.VisualStudio.Component.VC.14.44.17.14.MFC'
+          )
+          Write-Host "installer exit $($p.ExitCode)"
+          if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010 -and $p.ExitCode -ne 1641) { exit $p.ExitCode }
+          $atl = Get-ChildItem -Path $installPath -Recurse -Filter atlbase.h -ErrorAction SilentlyContinue | Select-Object -First 5 -ExpandProperty FullName
+          if (-not $atl) { throw "atlbase.h still missing after installing ATL/MFC 14.44" }
+          $atl | ForEach-Object { Write-Host "found $_" }
 
       - uses: Eden-CI/msvc-dev-cmd@master
         name: Native Tools Command Prompt.
